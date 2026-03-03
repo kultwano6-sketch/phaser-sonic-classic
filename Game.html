@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phaser 3 - Classic Sonic Physics</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        canvas { border: 2px solid #fff; }
+    </style>
+</head>
+<body>
+
+<script>
+/**
+ * Classic Sonic Physics Constants 
+ * Based on Sonic Physics Guide (sonicretro.org)
+ */
+const SONIC_PHYSICS = {
+    ACCEL: 15,          // How fast Sonic gains speed
+    FRICTION: 12,       // How fast Sonic slows down
+    TOP_SPEED: 450,     // Normal max speed
+    JUMP_FORCE: -650,   // Jump height
+    GRAVITY: 1500,      // Fall speed
+    SKID_THRESHOLD: 100 // Speed required to play skid animation
+};
+
+class SonicGame extends Phaser.Scene {
+    constructor() {
+        super('SonicGame');
+    }
+
+    preload() {
+        // Load assets from Phaser Labs
+        this.load.setBaseURL('https://labs.phaser.io');
+        
+        // Load Sonic Spritesheet (Atlas)
+        this.load.atlas('sonic', 'assets/games/sonic/sonic.png', 'assets/games/sonic/sonic.json');
+        
+        // Load simple background and platforms
+        this.load.image('sky', 'assets/skies/sky3.png');
+        this.load.image('platform', 'assets/sprites/platform.png');
+    }
+
+    create() {
+        // 1. Add Background
+        this.add.image(400, 300, 'sky').setScale(2);
+
+        // 2. Create Static Platforms
+        this.platforms = this.physics.add.staticGroup();
+        this.platforms.create(400, 580, 'platform').setScale(3).refreshBody(); // Floor
+        this.platforms.create(600, 450, 'platform');
+        this.platforms.create(200, 350, 'platform');
+        this.platforms.create(750, 250, 'platform');
+
+        // 3. Setup Sonic
+        this.player = this.physics.add.sprite(100, 450, 'sonic', 'wait/1');
+        this.player.setCollideWorldBounds(true);
+        this.player.body.setGravityY(SONIC_PHYSICS.GRAVITY);
+        this.player.body.setMaxVelocity(SONIC_PHYSICS.TOP_SPEED, 1000);
+        
+        // 4. Create Animations
+        this.anims.create({
+            key: 'walk',
+            frames: this.anims.generateFrameNames('sonic', { prefix: 'walk/', start: 1, end: 8 }),
+            frameRate: 15,
+            repeat: -1
+        });
+        this.anims.create({
+            key: 'run',
+            frames: this.anims.generateFrameNames('sonic', { prefix: 'run/', start: 1, end: 4 }),
+            frameRate: 20,
+            repeat: -1
+        });
+        this.anims.create({
+            key: 'jump',
+            frames: this.anims.generateFrameNames('sonic', { prefix: 'jump/', start: 1, end: 5 }),
+            frameRate: 15,
+            repeat: -1
+        });
+        this.anims.create({
+            key: 'idle',
+            frames: [{ key: 'sonic', frame: 'wait/1' }],
+            frameRate: 1
+        });
+
+        // 5. Input & Collisions
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.physics.add.collider(this.player, this.platforms);
+    }
+
+    update() {
+        const body = this.player.body;
+        const onGround = body.touching.down;
+
+        // --- HORIZONTAL MOVEMENT (MOMENTUM) ---
+        if (this.cursors.left.isDown) {
+            // Accelerate Left
+            if (body.velocity.x > 0) {
+                body.velocity.x -= SONIC_PHYSICS.FRICTION * 2; // Rapid brake
+            } else {
+                body.velocity.x -= SONIC_PHYSICS.ACCEL;
+            }
+            this.player.setFlipX(true);
+        } 
+        else if (this.cursors.right.isDown) {
+            // Accelerate Right
+            if (body.velocity.x < 0) {
+                body.velocity.x += SONIC_PHYSICS.FRICTION * 2; // Rapid brake
+            } else {
+                body.velocity.x += SONIC_PHYSICS.ACCEL;
+            }
+            this.player.setFlipX(false);
+        } 
+        else {
+            // Friction (Decelerate)
+            if (Math.abs(body.velocity.x) < SONIC_PHYSICS.FRICTION) {
+                body.setVelocityX(0);
+            } else {
+                body.velocity.x -= Math.sign(body.velocity.x) * SONIC_PHYSICS.FRICTION;
+            }
+        }
+
+        // --- JUMPING ---
+        if (this.cursors.up.isDown && onGround) {
+            body.setVelocityY(SONIC_PHYSICS.JUMP_FORCE);
+        }
+
+        // --- ANIMATION LOGIC ---
+        if (!onGround) {
+            this.player.play('jump', true);
+        } else {
+            const speed = Math.abs(body.velocity.x);
+            if (speed > 250) {
+                this.player.play('run', true);
+            } else if (speed > 5) {
+                this.player.play('walk', true);
+            } else {
+                this.player.play('idle', true);
+            }
+        }
+    }
+}
+
+const config = {
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    physics: {
+        default: 'arcade',
+        arcade: {
+            gravity: { y: 0 },
+            debug: false // Set to true to see hitboxes
+        }
+    },
+    scene: SonicGame
+};
+
+new Phaser.Game(config);
+</script>
+
+</body>
+  </html>

@@ -118,47 +118,145 @@ class SonicGame extends Phaser.Scene {
             if (Math.abs(body.velocity.x) < SONIC_PHYSICS.FRICTION) {
                 body.setVelocityX(0);
             } else {
-                body.velocity.x -= Math.sign(body.velocity.x) * SONIC_PHYSICS.FRICTION;
-            }
-        }
-
-        // --- JUMPING ---
-        if (this.cursors.up.isDown && onGround) {
-            body.setVelocityY(SONIC_PHYSICS.JUMP_FORCE);
-        }
-
-        // --- ANIMATION LOGIC ---
-        if (!onGround) {
-            this.player.play('jump', true);
-        } else {
-            const speed = Math.abs(body.velocity.x);
-            if (speed > 250) {
-                this.player.play('run', true);
-            } else if (speed > 5) {
-                this.player.play('walk', true);
-            } else {
-                this.player.play('idle', true);
-            }
-        }
-    }
-}
-
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <title>Upgraded Phaser Sonic Classic Runner</title>
+    <style> body { margin: 0; background: #000; } canvas { display: block; margin: auto; }</style>
+</head>
+<body>
+<script>
 const config = {
     type: Phaser.AUTO,
     width: 800,
     height: 600,
-    physics: {
-        default: 'arcade',
-        arcade: {
-            gravity: { y: 0 },
-            debug: false // Set to true to see hitboxes
-        }
-    },
-    scene: SonicGame
+    physics: { default: 'arcade', arcade: { gravity: { y: 1000 }, debug: false } },
+    scene: { preload, create, update }
 };
 
-new Phaser.Game(config);
-</script>
+let gameScene, player, platforms, enemies, rings, score = 0, scoreText, lives = 3, speed = 200;
+let cursors, spawner, paused = false;
+let highScore = localStorage.getItem('sonicHighScore') || 0;
 
+function preload() {
+    // Replace with your assets; free alternatives: opengameart.org sonic sprites
+    this.load.image('sky', 'https://labs.phaser.io/assets/skies/space3.png');
+    this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
+    this.load.image('sonic', 'https://labs.phaser.io/assets/sprites/phaser-dude.png'); // Placeholder
+    this.load.image('ring', 'https://labs.phaser.io/assets/sprites/star.png');
+    this.load.image('enemy', 'https://labs.phaser.io/assets/sprites/baddie.png');
+    this.load.audio('jump', 'https://labs.phaser.io/assets/audio/SoundEffects/jump.mp3');
+    this.load.audio('ring', 'https://labs.phaser.io/assets/audio/SoundEffects/coin.mp3');
+    this.load.bitmapFont('carrier', 'https://labs.phaser.io/assets/fonts/bitmap/carrier.png', 'https://labs.phaser.io/assets/fonts/bitmap/carrier.fnt');
+}
+
+function create() {
+    gameScene = this;
+    this.cameras.main.setBackgroundColor('#87CEEB');
+    
+    // World bounds
+    this.physics.world.setBounds(0, 0, 800, 600);
+    
+    // Platforms (infinite scroll)
+    platforms = this.physics.add.staticGroup();
+    const ground = platforms.create(400, 568, 'ground').setScale(2).refreshBody();
+    ground.body.setSize(1600, 32, false); // Wider for speed
+    
+    // Parallax sky
+    this.add.image(400, 300, 'sky').setScrollFactor(0.5);
+    
+    // Player
+    player = this.physics.add.sprite(100, 450, 'sonic').setScale(0.5);
+    player.setBounce(0.2).setCollideWorldBounds(true);
+    this.physics.add.collider(player, platforms);
+    
+    // Rings & Enemies groups
+    rings = this.physics.add.group();
+    enemies = this.physics.add.group();
+    this.physics.add.collider(player, rings, collectRing, null, this);
+    this.physics.add.collider(player, enemies, hitEnemy, null, this);
+    this.physics.add.collider(enemies, platforms);
+    
+    // Input
+    cursors = this.input.keyboard.createCursorKeys();
+    this.input.keyboard.on('keydown-SPACE', () => !paused && player.body.touching.down && jump());
+    this.input.keyboard.on('keydown-P', togglePause, this);
+    
+    // UI
+    scoreText = this.add.bitmapText(16, 16, 'carrier', 'Score: 0 | Lives: 3 | High: ' + highScore, 32).setScrollFactor(0);
+    this.add.bitmapText(16, 50, 'carrier', 'P: Pause | SPACE: Jump', 20).setScrollFactor(0);
+    
+    // Spawner timer
+    spawner = this.time.addEvent({ delay: 1500, callback: spawnObstacle, callbackScope: this, loop: true });
+    
+    // Sounds
+    this.sound.add('jump');
+    this.sound.add('ring');
+}
+
+function update() {
+    if (paused) return;
+    
+    // Auto-run & camera follow
+    platforms.children.entries.forEach(p => { if (p.x < -800) p.x += 2400; });
+    this.cameras.main.startFollow(player, true, 0.1);
+    
+    // Player anim/input
+    if (cursors.left.isDown) player.setVelocityX(-160);
+    else if (cursors.right.isDown) player.setVelocityX(160);
+    else player.setVelocityX(0);
+    
+    // Increase speed/challenge over time
+    speed += 0.001;
+    spawner.delay = Math.max(800, 1500 - score / 100);
+    
+    // Cleanup offscreen
+    rings.children.entries.forEach(r => r.x < -100 && r.destroy());
+    enemies.children.entries.forEach(e => e.x < -100 && e.destroy());
+    
+    scoreText.setText('Score: ' + score + ' | Lives: ' + lives + ' | High: ' + highScore);
+}
+
+function jump() {
+    player.setVelocityY(-500);
+    gameScene.sound.play('jump');
+}
+
+function spawnObstacle() {
+    if (Math.random() < 0.6) {
+        const ring = rings.create(900, Phaser.Math.Between(300, 500), 'ring').setScale(0.5);
+        ring.setVelocityX(-speed);
+    } else {
+        const enemy = enemies.create(900, 500, 'enemy');
+        enemy.setVelocityX(-speed).setBounce(1).setCollideWorldBounds(false);
+    }
+}
+
+function collectRing(player, ring) {
+    score += 10;
+    gameScene.sound.play('ring');
+    ring.destroy();
+}
+
+function hitEnemy(player, enemy) {
+    lives--;
+    enemy.destroy();
+    if (lives <= 0) {
+        if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('sonicHighScore', highScore);
+        }
+        gameScene.scene.restart(); // Game over: restart
+    }
+}
+
+function togglePause() {
+    paused = !paused;
+    gameScene.physics.world.isPaused = paused;
+    if (paused) gameScene.add.text(400, 300, 'PAUSED\nP to resume', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
+    else gameScene.children.removeAll();
+}
+</script>
 </body>
-  </html>
+</html>

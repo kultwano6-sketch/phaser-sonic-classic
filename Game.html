@@ -136,127 +136,213 @@ const config = {
 };
 
 let gameScene, player, platforms, enemies, rings, score = 0, scoreText, lives = 3, speed = 200;
-let cursors, spawner, paused = false;
-let highScore = localStorage.getItem('sonicHighScore') || 0;
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sonic Classic Runner - Perplexity Upgraded</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <style>
+        body { margin: 0; background: linear-gradient(to bottom, #87CEEB, #98D8E8); font-family: Arial; }
+        canvas { display: block; margin: auto; touch-action: none; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; font-size: 20px; z-index: 10; }
+        button { padding: 10px; margin: 5px; background: #4CAF50; color: white; border: none; cursor: pointer; }
+    </style>
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="data:application/manifest+json,{
+        'name': 'Sonic Runner', 'short_name': 'Sonic', 'start_url': '.', 'display': 'fullscreen',
+        'background_color': '#87CEEB', 'theme_color': '#FF0000', 'icons': [{'src': 'data:image/svg+xml;base64,...', 'sizes': '192x192'}]
+    }">
+</head>
+<body>
+    <div id="ui">
+        <div>Score: <span id="score">0</span> | Lives: <span id="lives">3</span> | Level: <span id="level">1</span> | High: <span id="high">0</span></div>
+        <button onclick="togglePause()">Pause</button>
+        <button onclick="toggleFullscreen()">Fullscreen</button>
+        <button onclick="showSettings()">Settings</button>
+    </div>
+    <script>
+        let game, scoreEl = document.getElementById('score'), livesEl = document.getElementById('lives'), 
+            levelEl = document.getElementById('level'), highEl = document.getElementById('high');
+        
+        const config = {
+            type: Phaser.AUTO,
+            scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+            width: 800, height: 600,
+            physics: { default: 'arcade', arcade: { gravity: { y: 1200 }, debug: false } },
+            scene: { preload, create, update }
+        };
 
-function preload() {
-    // Replace with your assets; free alternatives: opengameart.org sonic sprites
-    this.load.image('sky', 'https://labs.phaser.io/assets/skies/space3.png');
-    this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
-    this.load.image('sonic', 'https://labs.phaser.io/assets/sprites/phaser-dude.png'); // Placeholder
-    this.load.image('ring', 'https://labs.phaser.io/assets/sprites/star.png');
-    this.load.image('enemy', 'https://labs.phaser.io/assets/sprites/baddie.png');
-    this.load.audio('jump', 'https://labs.phaser.io/assets/audio/SoundEffects/jump.mp3');
-    this.load.audio('ring', 'https://labs.phaser.io/assets/audio/SoundEffects/coin.mp3');
-    this.load.bitmapFont('carrier', 'https://labs.phaser.io/assets/fonts/bitmap/carrier.png', 'https://labs.phaser.io/assets/fonts/bitmap/carrier.fnt');
-}
+        let player, platforms, obstacles = [], collectibles = [], powerups = [], particles,
+            score = 0, lives = 3, level = 1, highScore = localStorage.getItem('sonicHigh') || 0, combo = 1,
+            speed = 250, paused = false, jumpSound, ringSound, bg1, bg2;
+        let cursors, wasDown = false;
 
-function create() {
-    gameScene = this;
-    this.cameras.main.setBackgroundColor('#87CEEB');
-    
-    // World bounds
-    this.physics.world.setBounds(0, 0, 800, 600);
-    
-    // Platforms (infinite scroll)
-    platforms = this.physics.add.staticGroup();
-    const ground = platforms.create(400, 568, 'ground').setScale(2).refreshBody();
-    ground.body.setSize(1600, 32, false); // Wider for speed
-    
-    // Parallax sky
-    this.add.image(400, 300, 'sky').setScrollFactor(0.5);
-    
-    // Player
-    player = this.physics.add.sprite(100, 450, 'sonic').setScale(0.5);
-    player.setBounce(0.2).setCollideWorldBounds(true);
-    this.physics.add.collider(player, platforms);
-    
-    // Rings & Enemies groups
-    rings = this.physics.add.group();
-    enemies = this.physics.add.group();
-    this.physics.add.collider(player, rings, collectRing, null, this);
-    this.physics.add.collider(player, enemies, hitEnemy, null, this);
-    this.physics.add.collider(enemies, platforms);
-    
-    // Input
-    cursors = this.input.keyboard.createCursorKeys();
-    this.input.keyboard.on('keydown-SPACE', () => !paused && player.body.touching.down && jump());
-    this.input.keyboard.on('keydown-P', togglePause, this);
-    
-    // UI
-    scoreText = this.add.bitmapText(16, 16, 'carrier', 'Score: 0 | Lives: 3 | High: ' + highScore, 32).setScrollFactor(0);
-    this.add.bitmapText(16, 50, 'carrier', 'P: Pause | SPACE: Jump', 20).setScrollFactor(0);
-    
-    // Spawner timer
-    spawner = this.time.addEvent({ delay: 1500, callback: spawnObstacle, callbackScope: this, loop: true });
-    
-    // Sounds
-    this.sound.add('jump');
-    this.sound.add('ring');
-}
-
-function update() {
-    if (paused) return;
-    
-    // Auto-run & camera follow
-    platforms.children.entries.forEach(p => { if (p.x < -800) p.x += 2400; });
-    this.cameras.main.startFollow(player, true, 0.1);
-    
-    // Player anim/input
-    if (cursors.left.isDown) player.setVelocityX(-160);
-    else if (cursors.right.isDown) player.setVelocityX(160);
-    else player.setVelocityX(0);
-    
-    // Increase speed/challenge over time
-    speed += 0.001;
-    spawner.delay = Math.max(800, 1500 - score / 100);
-    
-    // Cleanup offscreen
-    rings.children.entries.forEach(r => r.x < -100 && r.destroy());
-    enemies.children.entries.forEach(e => e.x < -100 && e.destroy());
-    
-    scoreText.setText('Score: ' + score + ' | Lives: ' + lives + ' | High: ' + highScore);
-}
-
-function jump() {
-    player.setVelocityY(-500);
-    gameScene.sound.play('jump');
-}
-
-function spawnObstacle() {
-    if (Math.random() < 0.6) {
-        const ring = rings.create(900, Phaser.Math.Between(300, 500), 'ring').setScale(0.5);
-        ring.setVelocityX(-speed);
-    } else {
-        const enemy = enemies.create(900, 500, 'enemy');
-        enemy.setVelocityX(-speed).setBounce(1).setCollideWorldBounds(false);
-    }
-}
-
-function collectRing(player, ring) {
-    score += 10;
-    gameScene.sound.play('ring');
-    ring.destroy();
-}
-
-function hitEnemy(player, enemy) {
-    lives--;
-    enemy.destroy();
-    if (lives <= 0) {
-        if (score > highScore) {
-            highScore = score;
-            localStorage.setItem('sonicHighScore', highScore);
+        function preload() {
+            // Free/public assets (replace with repo sprites)
+            this.load.image('bg1', 'https://labs.phaser.io/assets/skies/space3.png');
+            this.load.image('bg2', 'https://labs.phaser.io/assets/skies/cityscape.png');
+            this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
+            this.load.spritesheet('sonic', 'https://labs.phaser.io/assets/sprites/phaser-dude.png', { frameWidth: 32, frameHeight: 48 });
+            this.load.image('ring', 'https://labs.phaser.io/assets/particles/star.png');
+            this.load.image('bomb', 'https://labs.phaser.io/assets/sprites/baddie.png');
+            this.load.image('shield', 'https://labs.phaser.io/assets/sprites/mushroom2.png');
+            this.load.audio('jump', 'https://labs.phaser.io/assets/audio/SoundEffects/jump.mp3');
+            this.load.audio('ring', 'https://labs.phaser.io/assets/audio/SoundEffects/coin.mp3');
+            this.load.audio('power', 'https://labs.phaser.io/assets/audio/SoundEffects/powerup3.mp3');
         }
-        gameScene.scene.restart(); // Game over: restart
-    }
-}
 
-function togglePause() {
-    paused = !paused;
-    gameScene.physics.world.isPaused = paused;
-    if (paused) gameScene.add.text(400, 300, 'PAUSED\nP to resume', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
-    else gameScene.children.removeAll();
-}
-</script>
+        function create() {
+            game = this;
+            highScore = parseInt(localStorage.getItem('sonicHigh') || 0);
+            highEl.textContent = highScore;
+            
+            // Parallax backgrounds
+            bg1 = this.add.image(0, 0, 'bg1').setOrigin(0).setScrollFactor(0.3);
+            bg2 = this.add.image(0, 0, 'bg2').setOrigin(0).setScrollFactor(0.6);
+            
+            // Platforms infinite
+            platforms = this.physics.add.staticGroup({ classType: Phaser.GameObjects.Image, key: 'ground' });
+            createPlatform.call(this, 400, 550);
+            
+            // Player with animations
+            player = this.physics.add.sprite(150, 450, 'sonic');
+            player.setBounce(0.1).setCollideWorldBounds(false).setScale(1.2);
+            this.anims.create({ key: 'run', frames: this.anims.generateFrameNumbers('sonic', { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+            player.anims.play('run', true);
+            this.physics.add.collider(player, platforms);
+            
+            // Groups
+            collectibles = this.physics.add.group();
+            obstacles = this.physics.add.group();
+            powerups = this.physics.add.group();
+            particles = this.add.particles('ring');
+            
+            // Collisions
+            this.physics.add.overlap(player, collectibles, collectRing);
+            this.physics.add.overlap(player, powerups, collectPowerup);
+            this.physics.add.collider(player, obstacles, hitObstacle);
+            
+            // Input
+            cursors = this.input.keyboard.createCursorKeys();
+            this.input.on('pointerdown', jump);
+            this.input.gamepad.on('down', (pad, button) => { if (button.index === 0) jump(); }); // A button
+            
+            // UI lock
+            this.cameras.main.setBackgroundColor('#87CEEB');
+            
+            // Spawners
+            this.time.addEvent({ delay: 1200, callback: spawnItem, callbackScope: this, loop: true });
+            
+            jumpSound = this.sound.add('jump');
+            ringSound = this.sound.add('ring');
+        }
+
+        function update(time, delta) {
+            if (paused) return;
+            
+            // Camera follow
+            this.cameras.main.startFollow(player);
+            
+            // Player movement
+            let vx = 0;
+            if (cursors.left.isDown || this.input.gamepad.total > 0 && this.input.gamepad.getPad(0).leftStick.x < -0.5) vx = -200;
+            if (cursors.right.isDown || this.input.gamepad.getPad(0).leftStick.x > 0.5) vx = 200;
+            player.setVelocityX(vx);
+            
+            // Jump touch/keyboard
+            if ((cursors.space.isDown || cursors.up.isDown) && player.body.touching.down) jump();
+            
+            // Infinite ground scroll
+            platforms.children.entries.forEach(p => {
+                p.x -= speed * delta / 1000;
+                if (p.x < -800) createPlatform.call(this, p.x + 1600, 550);
+            });
+            
+            // Cleanup
+            [collectibles, obstacles, powerups].forEach(group => group.children.entries.forEach(item => { if (item.x < -200) item.destroy(); }));
+            
+            // Ramp difficulty
+            speed = 250 + (score / 5000);
+            level = Math.floor(score / 10000) + 1;
+            levelEl.textContent = level;
+            
+            // Update UI
+            scoreEl.textContent = score;
+            livesEl.textContent = lives;
+            
+            // Particles follow player
+            if (player.body.velocity.y < 0) {
+                particles.createEmitter({
+                    speed: 100, lifespan: 300, scale: { start: 0.5, end: 0 }, follow: player, quantity: 2
+                }).explode(5, player.x, player.y);
+            }
+        }
+
+        function jump() {
+            if (player.body.touching.down) {
+                player.setVelocityY(-650);
+                jumpSound.play();
+            }
+        }
+
+        function spawnItem() {
+            const x = 900, y = Phaser.Math.Between(200, 500);
+            const rand = Math.random();
+            if (rand < 0.4) {
+                collectibles.create(x, y, 'ring').setVelocityX(-speed * 1.2).setScale(0.8);
+            } else if (rand < 0.7) {
+                obstacles.create(x, 520, 'bomb').setVelocityX(-speed).setBounce(1, 0.5);
+            } else {
+                powerups.create(x, y, 'shield').setVelocityX(-speed * 0.8);
+            }
+        }
+
+        function collectRing(player, ring) {
+            score += 10 * combo;
+            combo = Math.min(combo + 0.2, 5);
+            ringSound.play();
+            ring.destroy();
+            particles.createEmitter({ lifespan: 800, speed: 200, quantity: 10 }).explode(20, ring.x, ring.y);
+        }
+
+        function collectPowerup(player, powerup) {
+            score += 100;
+            game.sound.play('power');
+            // Shield effect: invincible 3s
+            player.setTint(0x00ff00);
+            game.time.delayedCall(3000, () => player.clearTint());
+            powerup.destroy();
+        }
+
+        function hitObstacle(player, obstacle) {
+            if (player.getBounds().bottom >= obstacle.getBounds().top) { // Jump on top
+                player.setVelocityY(-400);
+                score += 50;
+                obstacle.destroy();
+            } else {
+                lives--;
+                if (lives <= 0) gameOver();
+            }
+        }
+
+        function gameOver() {
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('sonicHigh', highScore);
+            }
+            paused = true;
+            game.add.text(400, 300, `Game Over!\nFinal Score: ${score}\nHigh: ${highScore}\nR: Restart`, 
+                { fontSize: '48px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+            game.input.keyboard.on('keydown-R', () => game.scene.restart());
+        }
+
+        function togglePause() { paused = !paused; game.physics.world.isPaused = paused; }
+        function toggleFullscreen() { game.scale.toggleFullscreen(); }
+        function showSettings() { alert('Volume: On | Controls: Arrows/SPACE/Touch | Mobile: Tilt soon'); }
+
+        game = new Phaser.Game(config);
+    </script>
 </body>
 </html>
